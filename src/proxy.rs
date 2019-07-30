@@ -5,10 +5,11 @@ use std::net::{SocketAddr, ToSocketAddrs};
 
 use http::{header::HeaderValue, Uri};
 use hyper::client::connect::Destination;
-use url::percent_encoding::percent_decode;
+use percent_encoding::percent_decode;
 use {IntoUrl, Url};
 use std::collections::HashMap;
 use std::env;
+use std::io;
 #[cfg(target_os = "windows")]
 use std::error::Error;
 #[cfg(target_os = "windows")]
@@ -330,11 +331,15 @@ impl ProxyScheme {
         // Resolve URL to a host and port
         #[cfg(feature = "socks")]
         let to_addr = || {
-            let host_and_port = try_!(url.with_default_port(|url| match url.scheme() {
-                "socks5" | "socks5h" => Ok(1080),
-                _ => Err(())
-            }));
-            let mut addr = try_!(host_and_port.to_socket_addrs());
+            let host = try_!(url.host_str().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "URL has no host")));
+            let port = try_!(match url.port_or_known_default() {
+                Some(port) => Ok(port),
+                None => match url.scheme() {
+                    "socks5" | "socks5h" => Ok(1080),
+                    _ => Err(io::Error::new(io::ErrorKind::InvalidData, "URL has no port")),
+                }
+            });
+            let mut addr = try_!(format!("{}:{}", host, port).to_socket_addrs());
             addr
                 .next()
                 .ok_or_else(::error::unknown_proxy_scheme)
